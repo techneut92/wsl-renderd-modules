@@ -70,19 +70,28 @@ fi
 
 # --- apply config overlay ------------------------------------------
 # Modules-only build:
-#   VGEM=m   — virtual GEM render node (provides /dev/dri/renderD128)
+#   VGEM=m   — virtual GEM render node (provides /dev/dri/renderD128).
+#              Already shipped =m by Microsoft on recent kernels
+#              (e.g. 6.6.114.1+); keep here so older kernels still
+#              get coverage.
 #   VKMS=m   — virtual KMS (provides /dev/dri/card1; needed by some
-#              EGL clients that probe the full DRM device set)
-#   DRM_GEM_SHMEM_HELPER=m — VKMS dep, ensure available as module
-#   DEBUG_INFO_BTF=n — dodges a GCC 16.1.1 -Werror inside
-#                      tools/bpf/resolve_btfids; harmless to disable.
-echo "build.sh: applying config overlay (VGEM=m, VKMS=m, BTF=n)"
+#              EGL clients that probe the full DRM device set). The
+#              actually-missing piece on stock WSL2.
+#   DRM_GEM_SHMEM_HELPER=m — VKMS dep, ensure available as module.
+#
+# We intentionally KEEP CONFIG_DEBUG_INFO_BTF=y. Microsoft ships its
+# kernel with CONFIG_DEBUG_INFO_BTF_MODULES=y, which adds two fields
+# (`btf_data`, `btf_data_size`) to `struct module`. Disabling BTF
+# here would change `struct module`'s layout and every module CRC
+# (including module_layout) — so vkms.ko built without BTF gets
+# rejected by Microsoft's running kernel with "disagrees about
+# version of symbol module_layout" even though vermagic matches.
+echo "build.sh: applying config overlay (VGEM=m, VKMS=m, BTF kept on)"
 cd "$SRCDIR"
 cp arch/x86/configs/config-wsl .config
 ./scripts/config --module  CONFIG_DRM_VGEM
 ./scripts/config --module  CONFIG_DRM_VKMS
 ./scripts/config --module  CONFIG_DRM_GEM_SHMEM_HELPER
-./scripts/config --disable CONFIG_DEBUG_INFO_BTF
 make olddefconfig
 
 # --- build modules -------------------------------------------------
@@ -97,8 +106,22 @@ make olddefconfig
 # tag so this is amortized; users hit the prebuilt path in 5 seconds.
 JOBS=${JOBS:-$(nproc)}
 
-echo "build.sh: make -j$JOBS (vmlinux + modules — the slow step)"
-make -j"$JOBS"
+# LOCALVERSION="" (defined-but-empty) tells scripts/setlocalversion
+# to skip the SCM-suffix branch. Without it, that script always
+# appends `+` here because Microsoft tags as `linux-msft-wsl-X.Y.Z.W`
+# (not `vX.Y.Z`), so its "exact-match-on-version-tag" check never
+# succeeds and falls through to the `+` fallback. The running kernel
+# ships without `+`, so a mismatch would make modprobe reject our
+# modules with a vermagic error.
+#
+# HOSTCFLAGS=-Wno-error=discarded-qualifiers is a workaround for a
+# strchr() const-cast in tools/bpf/resolve_btfids/libbpf/libbpf.c
+# that newer GCCs (≥16) flag as -Werror. The kernel's own host-side
+# Werror flips this fatal; older GCCs don't warn. Applying it
+# unconditionally is harmless.
+echo "build.sh: make -j$JOBS LOCALVERSION='' (vmlinux + modules — the slow step)"
+make -j"$JOBS" LOCALVERSION="" \
+     HOSTCFLAGS="-Wno-error=discarded-qualifiers"
 
 VGEM_KO="$SRCDIR/drivers/gpu/drm/vgem/vgem.ko"
 VKMS_KO="$SRCDIR/drivers/gpu/drm/vkms/vkms.ko"
