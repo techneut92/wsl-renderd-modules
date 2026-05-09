@@ -95,8 +95,7 @@ make olddefconfig
 #
 # Cost: ~5–10 min on a GitHub-hosted runner. CI runs once per kernel
 # tag so this is amortized; users hit the prebuilt path in 5 seconds.
-JOBS=$(nproc)
-[ "$JOBS" -gt 8 ] && JOBS=8
+JOBS=${JOBS:-$(nproc)}
 
 echo "build.sh: make -j$JOBS (vmlinux + modules — the slow step)"
 make -j"$JOBS"
