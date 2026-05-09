@@ -1,0 +1,111 @@
+name: Build modules
+
+# Build vgem.ko + vkms.ko against Microsoft's stock WSL2 kernel source
+# and publish them as a GitHub Release per kernel tag.
+#
+# Triggers:
+#   - push to main         → builds the latest Microsoft tag
+#   - schedule (weekly)    → catches new Microsoft releases
+#   - workflow_dispatch    → manual trigger from the Actions UI
+#
+# Skips builds where a release for the current latest tag already
+# exists, so re-runs are cheap on quiet weeks.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - build.sh
+      - .github/workflows/build.yml
+  schedule:
+    # Mondays 04:00 UTC — early enough to catch any Microsoft release
+    # from the previous week, late enough not to compete with rush
+    # hour on the GitHub-hosted runners.
+    - cron: '0 4 * * 1'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Kernel tag to build (or "latest")'
+        required: false
+        default: 'latest'
+
+permissions:
+  contents: write   # creating releases
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out this repo
+        uses: actions/checkout@v4
+
+      - name: Resolve target kernel tag
+        id: tag
+        env:
+          REQUESTED_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          requested="${REQUESTED_TAG:-latest}"
+          if [ "$requested" = "latest" ]; then
+            tag=$(git ls-remote --tags --refs \
+                    https://github.com/microsoft/WSL2-Linux-Kernel.git \
+                    'refs/tags/linux-msft-wsl-*' \
+                  | awk '{print $2}' \
+                  | sed 's|refs/tags/||' \
+                  | sort -V | tail -1)
+          else
+            tag="$requested"
+          fi
+          echo "Selected tag: $tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Skip if release already exists
+        id: skip
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release for $TAG already exists — skipping."
+            echo "skip=1" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install build deps
+        if: steps.skip.outputs.skip != '1'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            build-essential bison flex bc \
+            libelf-dev libssl-dev libncurses-dev \
+            python3 dwarves cpio xz-utils tar perl
+
+      - name: Build modules
+        if: steps.skip.outputs.skip != '1'
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: ./build.sh "$TAG"
+
+      - name: Upload artifacts (workflow run)
+        if: steps.skip.outputs.skip != '1'
+        uses: actions/upload-artifact@v4
+        with:
+          name: modules-${{ steps.tag.outputs.tag }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+      - name: Create GitHub Release
+        if: steps.skip.outputs.skip != '1' && github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          gh release create "$TAG" dist/*.tar.gz \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$TAG" \
+            --notes "Auto-built modules (vgem.ko + vkms.ko) for $TAG.
+
+          Each tarball ships:
+          - \`vgem.ko\` — virtual GEM render node (provides \`/dev/dri/renderD128\`)
+          - \`vkms.ko\` — virtual KMS (provides \`/dev/dri/card1\`)
+          - \`manifest.txt\` — kernel-tag, vermagic, build metadata
+
+          Modules' vermagic matches the corresponding Microsoft WSL2 kernel exactly, so they load on any WSL2 distro running that stock kernel. Used by [wsl-gnome-rdp-installer](https://github.com/techneut92/wsl-gnome-rdp-installer)."

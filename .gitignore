@@ -1,0 +1,6 @@
+/build/
+/dist/
+*.ko
+*.swp
+.idea/
+.vscode/
