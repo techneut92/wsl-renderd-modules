@@ -86,17 +86,20 @@ cp arch/x86/configs/config-wsl .config
 make olddefconfig
 
 # --- build modules -------------------------------------------------
+# `make modules_prepare` alone doesn't produce Module.symvers — modpost
+# then can't resolve `kfree`/`drm_*`/etc and fails with hundreds of
+# "undefined" errors. We need a real build that links vmlinux and
+# emits Module.symvers. `make` (the default target) does the lot:
+# vmlinux + bzImage + all configured modules. The .ko's we want land
+# in their respective driver dirs as a side effect.
+#
+# Cost: ~5–10 min on a GitHub-hosted runner. CI runs once per kernel
+# tag so this is amortized; users hit the prebuilt path in 5 seconds.
 JOBS=$(nproc)
 [ "$JOBS" -gt 8 ] && JOBS=8
 
-echo "build.sh: make modules_prepare -j$JOBS"
-make -j"$JOBS" modules_prepare
-
-echo "build.sh: build vgem.ko"
-make -j"$JOBS" M=drivers/gpu/drm/vgem modules
-
-echo "build.sh: build vkms.ko"
-make -j"$JOBS" M=drivers/gpu/drm/vkms modules
+echo "build.sh: make -j$JOBS (vmlinux + modules — the slow step)"
+make -j"$JOBS"
 
 VGEM_KO="$SRCDIR/drivers/gpu/drm/vgem/vgem.ko"
 VKMS_KO="$SRCDIR/drivers/gpu/drm/vkms/vkms.ko"
