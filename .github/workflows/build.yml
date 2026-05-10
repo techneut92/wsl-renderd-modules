@@ -5,11 +5,12 @@ name: Build modules
 #
 # Triggers:
 #   - push to main         → builds the latest Microsoft tag
-#   - schedule (weekly)    → catches new Microsoft releases
+#   - schedule (daily)     → catches new Microsoft releases within 24h
 #   - workflow_dispatch    → manual trigger from the Actions UI
 #
 # Skips builds where a release for the current latest tag already
-# exists, so re-runs are cheap on quiet weeks.
+# exists, so re-runs are free on quiet days — only the
+# tag-resolve + gh-release-view steps run before the early exit.
 
 on:
   push:
@@ -18,10 +19,12 @@ on:
       - build.sh
       - .github/workflows/build.yml
   schedule:
-    # Mondays 04:00 UTC — early enough to catch any Microsoft release
-    # from the previous week, late enough not to compete with rush
-    # hour on the GitHub-hosted runners.
-    - cron: '0 4 * * 1'
+    # 04:00 UTC daily. Off rush hour on GitHub-hosted runners.
+    # Daily-vs-weekly trade-off: a new Microsoft kernel tag reaches
+    # users within 24h instead of up to 7 days. Cost is negligible
+    # because of the skip-if-release-exists guard right after tag
+    # resolution.
+    - cron: '0 4 * * *'
   workflow_dispatch:
     inputs:
       tag:
