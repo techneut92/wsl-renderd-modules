@@ -2,7 +2,9 @@
 
 > ⚠️ **Experimental.** Auto-built kernel modules for use with WSL2's stock Microsoft kernel. Each release contains `vgem.ko` + `vkms.ko` whose vermagic matches the corresponding Microsoft WSL2 kernel exactly. No warranty — read the code before loading kernel modules.
 
-A small companion project for [wsl-gnome-rdp-installer](https://github.com/techneut92/wsl-gnome-rdp-installer): builds `vgem.ko` and `vkms.ko` against Microsoft's WSL2 kernel source so they can be `modprobe`'d into any WSL2 distro to expose `/dev/dri/renderD128`.
+Builds `vgem.ko` and `vkms.ko` against Microsoft's stock WSL2 kernel source and publishes them as GitHub Releases per kernel tag, so any WSL2 distro running that stock kernel can `modprobe` them in to expose `/dev/dri/renderD128` (and `/dev/dri/card1`) without rebuilding the kernel itself.
+
+Distro-agnostic: same `.ko` files work on Fedora, Debian, Ubuntu, openSUSE, Arch, etc. — see *How `vermagic` works* below for why. Used in combination with [wsl-gnome-rdp-installer](https://github.com/techneut92/wsl-gnome-rdp-installer) but not coupled to it; the modules are a self-contained drop-in.
 
 ## Why
 
@@ -13,7 +15,7 @@ You can patch this by:
 1. **Rebuilding the whole kernel with `CONFIG_DRM_VGEM=y`/`VKMS=y` and pinning it via `.wslconfig`** — heavy (~10 min build), pins you to a stale kernel until you rebuild.
 2. **Building just `vgem.ko` + `vkms.ko` as out-of-tree modules and `modprobe`'ing them** — fast (~30s build), no `.wslconfig` change, Microsoft's WSL kernel updates flow through normally.
 
-This repo automates option 2 in CI and publishes the .ko's as GitHub Releases. The downstream installer pulls the matching tarball and drops the modules into `/lib/modules/$(uname -r)/extra/`.
+This repo automates option 2 in CI and publishes the modules as GitHub Releases. Drop them into `/lib/modules/$(uname -r)/extra/`, run `depmod -a`, and they're available to `modprobe vgem` / `modprobe vkms`.
 
 ## What this is NOT
 
@@ -49,10 +51,10 @@ The script is identical to what runs in CI — `.github/workflows/build.yml` is 
 `.github/workflows/build.yml` runs:
 
 - on push (when `build.sh` or the workflow itself changes),
-- weekly Mondays at 04:00 UTC (catches new Microsoft kernel tags),
+- daily at 04:00 UTC (catches new Microsoft kernel tags within 24h),
 - on manual dispatch (with optional tag override).
 
-It resolves the latest `linux-msft-wsl-*` tag, skips if a release for that tag already exists, otherwise builds + releases. Idempotent.
+It resolves the latest `linux-msft-wsl-*` tag, skips if a release for that tag already exists, otherwise builds + releases. Idempotent — the daily cron is a near-no-op until Microsoft tags a new kernel.
 
 ## How `vermagic` works (and why this is portable)
 
